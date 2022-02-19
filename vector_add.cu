@@ -1,8 +1,10 @@
 #include <stdio.h>
 
+__global__
 void initWith(float num, float *a, int N)
 {
-  for(int i = 0; i < N; ++i)
+  int stride = blockDim.x * gridDim.x;
+  for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < N; i += stride)
   {
     a[i] = num;
   }
@@ -45,6 +47,9 @@ int main()
 {
   const int N = 2<<24;
   size_t size = N * sizeof(float);
+  
+  int deviceId;
+  cudaGetDevice(&deviceId);
 
   float *a;
   float *b;
@@ -53,14 +58,14 @@ int main()
   cudaMallocManaged(&a, size);
   cudaMallocManaged(&b, size);
   cudaMallocManaged(&c, size);
-
-  initWith(3, a, N);
-  initWith(4, b, N);
-  initWith(0, c, N);
+  
+  cudaMemPrefetchAsync(a, size, deviceId);
+  cudaMemPrefetchAsync(b, size, deviceId);
+  cudaMemPrefetchAsync(c, size, deviceId);
 
   size_t threadsPerBlock;
   size_t numberOfBlocks;
-   
+
   threadsPerBlock = 1;
   numberOfBlocks = 1;
   cudaDeviceProp gpuProps = getProps();
@@ -88,6 +93,10 @@ int main()
   cudaError_t asyncErr;
 
   printf("Blocks %u Threads %u Multiprocs: %u\n", numberOfBlocks, threadsPerBlock, gpuProps.multiProcessorCount);
+  
+  initWith<<<numberOfBlocks, threadsPerBlock>>>(3, a, N);
+  initWith<<<numberOfBlocks, threadsPerBlock>>>(4, b, N);
+  initWith<<<numberOfBlocks, threadsPerBlock>>>(0, c, N);
   addVectorsInto<<<numberOfBlocks, threadsPerBlock>>>(c, a, b, N);
 
   addVectorsErr = cudaGetLastError();
@@ -96,6 +105,7 @@ int main()
   asyncErr = cudaDeviceSynchronize();
   if(asyncErr != cudaSuccess) printf("Error: %s\n", cudaGetErrorString(asyncErr));
 
+  cudaMemPrefetchAsync(c, size, cudaCpuDeviceId);
   checkElementsAre(7, c, N);
 
   cudaFree(a);
